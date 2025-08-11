@@ -214,7 +214,7 @@ if __name__ == "__main__":
 
 ## Running the Service as the Default `pi` User
 
-### 1) Create Directory, Virtual Environment, and Script
+### Create Directory, Virtual Environment, and Script
 
 ```
 # Work as pi user
@@ -232,6 +232,7 @@ nano /home/pi/ttn2owntracks/ttn2owntracks.py
 # (Content = your current Python script)
 
 deactivate
+```
 
 ## env file
 ```
@@ -303,15 +304,13 @@ journalctl -u ttn2owntracks.service -f
 ```
 
 ## Updating the Service
-```
-# Edit the script
-nano /home/pi/ttn2owntracks/ttn2owntracks.py
+### Edit the script
+`nano /home/pi/ttn2owntracks/ttn2owntracks.py`
 
-# Update Python packages
-. /home/pi/ttn2owntracks/.venv/bin/activate && pip install -U paho-mqtt requests && deactivate
+### Update Python packages
+`. /home/pi/ttn2owntracks/.venv/bin/activate && pip install -U paho-mqtt requests && deactivate`
 
-# Restart the service
-sudo systemctl restart ttn2owntracks.service
-```
+### Restart the service
+`sudo systemctl restart ttn2owntracks.service`
 
 
