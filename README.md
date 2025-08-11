@@ -23,3 +23,39 @@ From https://wiki.dragino.com/xwiki/bin/view/Main/End%20Device%20AT%20Commands%2
 <img width="951" height="318" alt="grafik" src="https://github.com/user-attachments/assets/2e136f39-f251-4a90-b9bb-8d6c89fc9685" />
 
 This is much easier to understand...
+
+- Linking it to fhem...
+Is doable. Create MQTT API key in TTN dashboard. MQTT username is app@ttn. MQTT password is API key. fhem somehow doesn't like MQTT over TLS. So we need a bridge in our MQTT broker (don't send unencrypted password over internet...).
+mosquitto config file (e.g. `/etc/mosquitto/conf.d/bridge.conf`)
+```
+# new bridge
+connection ttn
+address eu1.cloud.thethings.network:8883
+# alle topics, both directions
+topic # both
+# If set to true, all subscriptions and messages on the remote broker will be cleaned up
+# if the connection drops. Note that setting to true may cause a large amount of retained
+# messages to be sent each time the bridge reconnects.
+cleansession true
+start_type automatic
+notifications false
+local_password <pw of local broker>
+local_username <username of local broker>
+remote_username <app name>@ttn
+remote_password <your api key>
+
+# =================================================================
+# Certificate based SSL/TLS support
+# -----------------------------------------------------------------
+#Path to the rootCA
+# take the minimum ca file linkd in the ttn doc
+bridge_cafile /etc/mosquitto/certs/rootCATTN.pem
+
+# Path to the PEM encoded client certificate
+# don't need this
+#bridge_certfile /etc/mosquitto/certs/cert.crt
+
+# Path to the PEM encoded client private key
+# don't need this
+#bridge_keyfile /etc/mosquitto/certs/private.key
+```
