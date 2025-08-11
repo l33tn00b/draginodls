@@ -17,3 +17,9 @@ Single char input doesn't work. You need to paste the entire command at once int
 Need to enter the entire command at once, not a single character.
 User can open a command window or copy the entire command to the serial console.
 ```
+
+- What about the ACK?
+From https://wiki.dragino.com/xwiki/bin/view/Main/End%20Device%20AT%20Commands%20and%20Downlink%20Command/:
+<img width="951" height="318" alt="grafik" src="https://github.com/user-attachments/assets/2e136f39-f251-4a90-b9bb-8d6c89fc9685" />
+
+This is much easier to understand...
