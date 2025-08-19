@@ -1,6 +1,8 @@
-# draginodls
-Setting Up Dragino D-LS GPS Tracker for TTN
+# draginodls and sensecap T1000
+Setting Up Dragino D-LS GPS Tracker and T1000-A Tracker for TTN
 
+
+## Dragino DLS
 Just some quick notes:
 
 - make sure to set channel SF12!
@@ -24,7 +26,27 @@ From https://wiki.dragino.com/xwiki/bin/view/Main/End%20Device%20AT%20Commands%2
 
 This is much easier to understand...
 
-- Linking it to fhem...
+## SenseCAP T1000-A (Seeed Studio)
+Took me a while... but works.
+- get the companion app (sensecraft)
+- Skip registration in app (top right hand corner)
+- expert setup (tap "resume")
+- push the tracker's button for three seconds
+- choose tracker in app
+- wait for scan completion (less than a second)
+- tap tracker id
+- advanced configuration
+- tab settings
+- platform the things network
+- frequency plan as per region
+- activation type otaa
+- app eui is the things network's join eui! (there is some strange note in the seeed wiki)
+- DON'T tap the "copy" button for getting the IDs. The paste will include the id name (and therefore your device will never join the network). Instead mark the hex values and copy these for pasting into the ttn console!
+- After going back to the app's first screen, the device will be disconnected and try joining the network.
+
+
+
+#  Linking it to fhem...
 Is doable. Create MQTT API key in TTN dashboard. MQTT username is app@ttn. MQTT password is API key. fhem somehow doesn't like MQTT over TLS. So we need a bridge in our MQTT broker (don't send unencrypted password over internet...).
 mosquitto config file (e.g. `/etc/mosquitto/conf.d/bridge.conf`)
 ```
@@ -59,6 +81,7 @@ bridge_cafile /etc/mosquitto/certs/rootCATTN.pem
 # don't need this
 #bridge_keyfile /etc/mosquitto/certs/private.key
 ```
+
 # Cobbling it to owntracks_recorder
 TTN has an MQTT server. So does owntracks_recorder.
 Since I've already got ot_recorder up and running, why not dump all the tracking data in there? Here we go...
