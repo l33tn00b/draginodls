@@ -35,6 +35,7 @@ This is much easier to understand...
   - Download should look like this (after succesful completion):
     <img width="424" height="676" alt="grafik" src="https://github.com/user-attachments/assets/7645bd4b-d22c-4103-a0f4-a2f52936834a" />
   - Firmware (merged version) needs to be configured to know it is on a D-LS device: `Use AT+DEVICE=22 to configure as TrackerD-LS` as per https://github.com/dragino/TrackerD/issues/37 (and also changelog)
+  - Well, with v1.5.6 the tracker shows a version of 1.0.7 instead of the factory 1.0.3 (not quite 1.5.6)...
 
 ## SenseCAP T1000-A (Seeed Studio)
 Took me a while... but works.
