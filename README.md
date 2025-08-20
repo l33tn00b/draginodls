@@ -26,6 +26,16 @@ From https://wiki.dragino.com/xwiki/bin/view/Main/End%20Device%20AT%20Commands%2
 
 This is much easier to understand...
 
+- Upgrading the firmware
+  - Get the ESP Download Tool from [https://www.dropbox.com/scl/fo/ztlw35a9xbkomu71u31im/AMBNyRAnzPS7eJJ1ibfl6WM/LoRaWAN%20End%20Node/TrackerD/Flash%20Tool?dl=0&rlkey=ojjcsw927eaow01dgooldq3nu](https://www.dropbox.com/scl/fo/ztlw35a9xbkomu71u31im/AMBNyRAnzPS7eJJ1ibfl6WM/LoRaWAN%20End%20Node/TrackerD/Flash%20Tool?rlkey=ojjcsw927eaow01dgooldq3nu&subfolder_nav_tracking=1&dl=0)
+  - Head to [https://github.com/dragino/TrackerD/releases](https://github.com/dragino/TrackerD/releases) and get the latest firmware (yes, it's TrackerD, firmware of D and D-LS has been merged).
+  - Unpack the firmware
+  - The official wiki picture shows a download for a completely new device which has never been flashed. You don't need all the code shown in the image (see also: https://github.com/dragino/TrackerD/issues/45)
+  - Make sure to choose ESP32 when starting the downloader
+  - Download should look like this (after succesful completion):
+    <img width="424" height="676" alt="grafik" src="https://github.com/user-attachments/assets/7645bd4b-d22c-4103-a0f4-a2f52936834a" />
+  - Firmware (merged version) needs to be configured to know it is on a D-LS device: `Use AT+DEVICE=22 to configure as TrackerD-LS` as per https://github.com/dragino/TrackerD/issues/37 (and also changelog)
+
 ## SenseCAP T1000-A (Seeed Studio)
 Took me a while... but works.
 - get the companion app (sensecraft)
