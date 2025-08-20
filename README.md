@@ -1,6 +1,7 @@
 # draginodls and sensecap T1000
 Setting Up Dragino D-LS GPS Tracker and T1000-A Tracker for TTN
 
+When linking these to TTN, I use separate applications (because of separate payload decoders) (too lazy to create a unified one for both trackers).
 
 ## Dragino DLS
 Just some quick notes:
@@ -37,27 +38,7 @@ This is much easier to understand...
   - Firmware (merged version) needs to be configured to know it is on a D-LS device: `Use AT+DEVICE=22 to configure as TrackerD-LS` as per https://github.com/dragino/TrackerD/issues/37 (and also changelog)
   - Well, with v1.5.6 the tracker shows a version of 1.0.7 instead of the factory 1.0.3 (not quite 1.5.6)...
 
-## SenseCAP T1000-A (Seeed Studio)
-Took me a while... but works.
-- get the companion app (sensecraft)
-- Skip registration in app (top right hand corner)
-- expert setup (tap "resume")
-- push the tracker's button for three seconds
-- choose tracker in app
-- wait for scan completion (less than a second)
-- tap tracker id
-- advanced configuration
-- tab settings
-- platform the things network
-- frequency plan as per region
-- activation type otaa
-- app eui is the things network's join eui! (there is some strange note in the seeed wiki)
-- DON'T tap the "copy" button for getting the IDs. The paste will include the id name (and therefore your device will never join the network). Instead mark the hex values and copy these for pasting into the ttn console!
-- After going back to the app's first screen, the device will be disconnected and try joining the network.
-
-
-
-#  Linking it to fhem...
+###  Linking it to fhem...
 Is doable. Create MQTT API key in TTN dashboard. MQTT username is app@ttn. MQTT password is API key. fhem somehow doesn't like MQTT over TLS. So we need a bridge in our MQTT broker (don't send unencrypted password over internet...).
 mosquitto config file (e.g. `/etc/mosquitto/conf.d/bridge.conf`)
 ```
@@ -93,7 +74,29 @@ bridge_cafile /etc/mosquitto/certs/rootCATTN.pem
 #bridge_keyfile /etc/mosquitto/certs/private.key
 ```
 
-# Cobbling it to owntracks_recorder
+## SenseCAP T1000-A (Seeed Studio)
+Took me a while... but works.
+- get the companion app (sensecraft)
+- Skip registration in app (top right hand corner)
+- expert setup (tap "resume")
+- push the tracker's button for three seconds
+- choose tracker in app
+- wait for scan completion (less than a second)
+- tap tracker id
+- advanced configuration
+- tab settings
+- platform the things network
+- frequency plan as per region
+- activation type otaa
+- app eui is the things network's join eui! (there is some strange note in the seeed wiki)
+- DON'T tap the "copy" button for getting the IDs. The paste will include the id name (and therefore your device will never join the network). Instead mark the hex values and copy these for pasting into the ttn console!
+- After going back to the app's first screen, the device will be disconnected and try joining the network.
+
+
+
+
+
+# Cobbling Dragino to owntracks_recorder
 TTN has an MQTT server. So does owntracks_recorder.
 Since I've already got ot_recorder up and running, why not dump all the tracking data in there? Here we go...
 Well, we need some glue logic for conversion... (mqtt -> http)
@@ -347,4 +350,249 @@ journalctl -u ttn2owntracks.service -f
 ### Restart the service
 `sudo systemctl restart ttn2owntracks.service`
 
+# Cobbling SenseCap T1000 to owntracks_recorder
+Pretty much the same as for Dragino D-LS with some slight variations...
 
+## set up mqtt bridge
+Maybe, if you already have an mqtt broker running locally
+
+## create python script
+ttn2owntracks_t1000.py, drop it into the same directory as the dragino one (i.e. /home/pi/ttn2owntracks). Use the same venv for both scripts.
+
+```
+import json
+import os
+import time
+import logging
+from typing import Any, Dict, Optional, Tuple, Iterable
+
+import requests
+from paho.mqtt import client as mqtt
+
+# ---------- Configuration ----------
+MQTT_HOST       = os.getenv("MQTT_HOST", "eu1.cloud.thethings.network")
+# maybe, maybe we should default to tls
+MQTT_PORT       = int(os.getenv("MQTT_PORT", "8883"))
+# maybe, maybe we should default to tls
+MQTT_TLS        = bool(int(os.getenv("MQTT_TLS", "1")))  # TTN uses TLS (8883)
+MQTT_USER       = os.getenv("MQTT_USER", "")             # TTN: 'v3/<app-id>@ttn'
+MQTT_PASS       = os.getenv("MQTT_PASS", "")             # TTN API-Key 'NNSXS...'
+# will get data from all devices registered in an application ("+")
+MQTT_TOPIC      = os.getenv("MQTT_TOPIC", "v3/+/devices/+/up")
+
+RECORDER_BASEURL = os.getenv("RECORDER_BASEURL", "https://recorder.example.com/pub")
+REC_HTTP_USER    = os.getenv("REC_HTTP_USER", "")        # Basic-Auth optional
+REC_HTTP_PASS    = os.getenv("REC_HTTP_PASS", "")
+TIMEOUT_SEC      = 10
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+session = requests.Session()
+
+# ---------- Helpers ----------
+def _flatten(xs: Any) -> Iterable[Any]:
+    if isinstance(xs, list):
+        for x in xs:
+            yield from _flatten(x)
+    else:
+        yield xs
+
+def derive_u_d_from_payload_or_topic(payload: Dict[str, Any], topic: str) -> Tuple[str, str]:
+    # get user for owntracks recorder from payload or topic
+    # 1) from payload  (TTN v3)
+    app = (
+        payload.get("end_device_ids", {})
+        .get("application_ids", {})
+        .get("application_id")
+    )
+    dev = payload.get("end_device_ids", {}).get("device_id")
+    if app and dev:
+        return app, dev
+    # 2) fallback: from Topic v3/<app>@ttn/devices/<device>/up
+    parts = topic.split("/")
+    try:
+        app_part = parts[1]               # '<app>@ttn'
+        device   = parts[3]               # '<device>'
+        app_id   = app_part.split("@")[0] # '<app>'
+        return app_id, device
+    except Exception:
+        return "unknownapp", "unknowndevice"
+
+def parse_lat_lon_tst_batt(payload: Dict[str, Any]) -> Tuple[float, float, int, Optional[int]]:
+    """
+    Extrahiert lat/lon/tst/batt aus TTN v3 Uplink-JSON.
+    - Primär: decoded_payload.messages mit type 'Latitude'/'Longitude'
+    - tst aus dortigem 'timestamp' (ms), sonst uplink_message.received_at, sonst now()
+    - batt aus last_battery_percentage.value oder type 'Battery'
+    """
+    uplink = payload.get("uplink_message", {}) or {}
+    dp = uplink.get("decoded_payload", {}) or {}
+
+    lat = lon = None
+    batt = None
+    tst_ms = None
+
+    # Prefer structured 'messages' list(s)
+    msgs = dp.get("messages", None)
+    if msgs is not None:
+        for item in _flatten(msgs):
+            if isinstance(item, dict):
+                t = item.get("type")
+                val = item.get("measurementValue")
+                ts = item.get("timestamp")
+                if t == "Latitude" and val is not None:
+                    lat = float(val);  tst_ms = int(ts) if isinstance(ts, (int,float)) else tst_ms
+                elif t == "Longitude" and val is not None:
+                    lon = float(val);  tst_ms = int(ts) if isinstance(ts, (int,float)) else tst_ms
+                elif t == "Battery" and val is not None and batt is None:
+                    try: batt = int(round(float(val)))
+                    except: pass
+
+    # If still missing, give up early so caller can skip
+    if lat is None or lon is None:
+        raise ValueError("no lat/lon in decoded_payload.messages")
+
+    # Timestamp fallback
+    if tst_ms is None:
+        rfc3339 = uplink.get("received_at") or payload.get("received_at")
+        if isinstance(rfc3339, str):
+            from datetime import datetime
+            try:
+                fmt = "%Y-%m-%dT%H:%M:%S.%fZ" if "." in rfc3339 else "%Y-%m-%dT%H:%M:%SZ"
+                tst_ms = int(datetime.strptime(rfc3339, fmt).timestamp() * 1000)
+            except: pass
+    if tst_ms is None:
+        import time as _t
+        tst_ms = int(_t.time() * 1000)
+
+    # Batt fallback from last_battery_percentage
+    if batt is None:
+        lb = uplink.get("last_battery_percentage", {})
+        if isinstance(lb, dict) and "value" in lb:
+            try: batt = int(round(float(lb["value"])))
+            except: pass
+
+    # Bounds check
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise ValueError(f"unplausible lat/lon: {lat}, {lon}")
+
+    return float(lat), float(lon), int(tst_ms // 1000), batt
+
+
+
+def build_owntracks_payload(lat: float, lon: float, tst: int, batt: Optional[int]) -> Dict[str, Any]:
+    ot = {"_type": "location", "lat": lat, "lon": lon, "tst": tst}
+    if batt is not None:
+        ot["batt"] = batt
+    return ot
+
+def post_to_recorder(u: str, d: str, ot_payload: Dict[str, Any]) -> None:
+    url = f"{RECORDER_BASEURL}?u={u}&d={d}"
+    headers = {"Content-Type": "application/json"}
+    auth = (REC_HTTP_USER, REC_HTTP_PASS) if REC_HTTP_USER else None
+    resp = session.post(url, data=json.dumps(ot_payload), headers=headers, auth=auth, timeout=TIMEOUT_SEC)
+    if resp.status_code // 100 != 2:
+        raise RuntimeError(f"Recorder HTTP {resp.status_code}: {resp.text}")
+
+# ---------- MQTT Callbacks ----------
+def on_connect(client, userdata, flags, rc, properties=None):
+    if rc == 0:
+        logging.info("MQTT connected")
+        client.subscribe(MQTT_TOPIC, qos=1)
+        logging.info(f"Subscribed: {MQTT_TOPIC}")
+    else:
+        logging.error(f"MQTT connect failed: rc={rc}")
+
+def on_message(client, userdata, msg):
+    try:
+        payload = json.loads(msg.payload.decode("utf-8"))
+        u, d = derive_u_d_from_payload_or_topic(payload, msg.topic)
+
+        try:
+            lat, lon, tst, batt = parse_lat_lon_tst_batt(payload)
+        except Exception as e:
+            # No coordinates in this frame → just log at INFO and return
+            logging.info(f"Skipped (no lat/lon) u={u} d={d} reason={e}")
+            return
+
+        ot_payload = build_owntracks_payload(lat, lon, tst, batt)
+        post_to_recorder(u, d, ot_payload)
+        logging.info(f"→ Recorder OK  u={u} d={d} lat={lat:.6f} lon={lon:.6f} tst={tst} batt={batt}")
+    except Exception as e:
+        logging.exception(f"Fehler bei {msg.topic}: {e}")
+
+
+
+def main():
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    if MQTT_USER or MQTT_PASS:
+        client.username_pw_set(MQTT_USER, MQTT_PASS)
+    if MQTT_TLS:
+        client.tls_set()  # Standard-Truststore; bei Self-signed ggf. ca_certs angeben
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+    client.loop_forever()
+
+if __name__ == "__main__":
+    main()
+```
+
+## create systemd script
+```
+sudo tee /etc/systemd/system/ttn2owntracks_t1000.service >/dev/null <<'EOF'
+[Unit]
+Description=TTN -> OwnTracks Recorder Bridge for SenseCap T1000 (MQTT in, HTTP out)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/ttn2owntracks
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=-/etc/ttn2owntracks_t1000.env
+ExecStart=/home/pi/ttn2owntracks/.venv/bin/python /home/pi/ttn2owntracks/ttn2owntracks_t1000.py
+Restart=always
+RestartSec=5
+
+# Security hardening (adapted for home directory access)
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ReadWritePaths=/home/pi/ttn2owntracks
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallFilter=@system-service @network-io
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+## create env file
+```
+cat > ttn2owntracks_t1000.env <<'EOF'
+# --- MQTT / TTN ---
+MQTT_HOST=your_mqtt_server
+MQTT_PORT=8883
+MQTT_TLS=1
+MQTT_USER=mqtt_user
+MQTT_PASS=mqtt_password
+MQTT_TOPIC=v3/+/devices/+/up
+
+# --- OwnTracks Recorder ---
+RECORDER_BASEURL=http://example.owntracks_recorder:port/pub
+REC_HTTP_USER=          # leave empty if no Basic-Auth
+REC_HTTP_PASS=         # leave empty if no Basic-Auth
+EOF
+
+chmod 640 /etc/ttn2owntracks_t1000.env
+chown root:root /etc/ttn2owntracks_t1000.env
+```
+
+## run it
+```
+systemctl --user daemon-reload
+systemctl --user enable --now ttn2owntracks_t1000.service
+systemctl status ttn2owntracks_t1000
+```
